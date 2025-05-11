@@ -5,11 +5,14 @@ reloj_logico = 0
 
 def manejar_cliente(conn, addr):
     global reloj_logico
-    print(f"[Servidor] Conectado con {addr}")
-    data = conn.recv(1024).decode()
-    reloj_remoto = int(data)
+    print(f"\n[Servidor] Conexión entrante de {addr} | Reloj actual: {reloj_logico}")
+    
+    reloj_remoto = int(conn.recv(1024).decode())
+    print(f"[Servidor] Reloj recibido del cliente: {reloj_remoto}")
+    
     reloj_logico = max(reloj_logico, reloj_remoto) + 1
-    print(f"[Servidor] Recibido reloj: {reloj_remoto}. Reloj lógico actualizado: {reloj_logico}")
+    print(f"[Servidor] Reloj actualizado: {reloj_logico} (max({reloj_logico}, {reloj_remoto}) + 1)")
+    
     conn.close()
 
 def iniciar_servidor(puerto):
