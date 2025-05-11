@@ -9,10 +9,11 @@ class BullyNode:
         self.node_id = node_id
         self.port = port
         self.all_ports = all_ports  # {id: port}
-        self.leader_id = max(all_ports.keys())
+        self.leader_id = max(all_ports.keys())  # Líder inicial es el de mayor ID
         self.active = True
         self.election_in_progress = False
         self.ok_received = False
+        self.known_leader = self.leader_id
         
         # Configurar socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -35,8 +36,8 @@ class BullyNode:
                 if data:
                     message = json.loads(data)
                     self.handle_message(message)
-            except:
-                pass
+            except Exception as e:
+                print(f"[Nodo {self.node_id}] Error en listen: {str(e)}")
 
     def handle_message(self, message):
         """Procesa mensajes recibidos"""
@@ -79,19 +80,21 @@ class BullyNode:
         
         # Enviar a nodos con mayor ID
         higher_nodes = [n_id for n_id in self.all_ports if n_id > self.node_id]
+        responses = 0
         
         for n_id in higher_nodes:
             if self.send_message(self.all_ports[n_id], 'election'):
                 print(f"[Nodo {self.node_id}] Enviado ELECTION a {n_id}")
+                responses += 1
         
-        # Esperar respuestas
+        # Esperar respuestas (2 segundos)
         time.sleep(2)
         
         # Si no hay nodos mayores o no respondieron
         if not higher_nodes or not self.ok_received:
             self.declare_victory()
         else:
-            print(f"[Nodo {self.node_id}] Elección fallida, recibió OK")
+            print(f"[Nodo {self.node_id}] Elección fallida, recibió respuestas")
             self.election_in_progress = False
 
     def handle_election(self, message):
@@ -116,6 +119,7 @@ class BullyNode:
     def declare_victory(self):
         """Se declara líder"""
         self.leader_id = self.node_id
+        self.known_leader = self.node_id
         self.election_in_progress = False
         print(f"\n=== [Nodo {self.node_id}] ¡Soy el nuevo LÍDER! ===")
         
@@ -129,6 +133,7 @@ class BullyNode:
         """Procesa anuncio de victoria"""
         print(f"[Nodo {self.node_id}] Reconociendo nuevo líder: {message['sender_id']}")
         self.leader_id = message['sender_id']
+        self.known_leader = message['sender_id']
         self.election_in_progress = False
 
     def handle_ping(self):
@@ -147,7 +152,18 @@ class BullyNode:
             return False
             
         try:
-            return self.send_message(leader_port, 'ping')
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1.0)
+            s.connect(('localhost', leader_port))
+            message = {
+                'type': 'ping',
+                'sender_id': self.node_id,
+                'sender_port': self.port
+            }
+            s.send(json.dumps(message).encode())
+            response = s.recv(1024).decode()
+            s.close()
+            return True
         except:
             return False
 
@@ -161,13 +177,13 @@ class BullyNode:
                 continue
                 
             # Verificar líder (excepto si soy el líder)
-            if self.node_id != self.leader_id:
+            if self.node_id != self.known_leader:
                 if not self.check_leader():
-                    print(f"[Nodo {self.node_id}] ¡Líder {self.leader_id} no responde!")
+                    print(f"[Nodo {self.node_id}] ¡Líder {self.known_leader} no responde!")
                     self.start_election()
             
-            # Simular falla aleatoria (10% de probabilidad, AHORA INCLUYE AL LÍDER)
-            if random.random() < 0.1:  # Eliminada la restricción para el líder
+            # Simular falla aleatoria (10% de probabilidad)
+            if random.random() < 0.1:
                 self.active = False
                 print(f"\n[Nodo {self.node_id}] ¡HE FALLADO!")
                 time.sleep(random.randint(10, 15))
@@ -182,7 +198,7 @@ class BullyNode:
         while True:
             time.sleep(8)
             if self.active:
-                status = "LÍDER" if self.node_id == self.leader_id else f"seguidor (Líder: {self.leader_id})"
+                status = "LÍDER" if self.node_id == self.known_leader else f"seguidor (Líder: {self.known_leader})"
                 print(f"[Nodo {self.node_id}] Estado: {status}")
 
 def main():
@@ -208,5 +224,6 @@ def main():
     # Mantener programa ejecutando
     while True:
         time.sleep(1)
+
 
 main()
