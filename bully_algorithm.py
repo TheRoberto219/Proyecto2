@@ -35,8 +35,8 @@ class BullyNode:
                 if data:
                     message = json.loads(data)
                     self.handle_message(message)
-            except Exception as e:
-                print(f"[Nodo {self.node_id}] Error en listen: {str(e)}")
+            except:
+                pass
 
     def handle_message(self, message):
         """Procesa mensajes recibidos"""
@@ -78,18 +78,17 @@ class BullyNode:
         print(f"\n[Nodo {self.node_id}] Iniciando elección")
         
         # Enviar a nodos con mayor ID
-        higher_nodes_exist = False
-        for n_id, port in self.all_ports.items():
-            if n_id > self.node_id:
-                higher_nodes_exist = True
-                if self.send_message(port, 'election'):
-                    print(f"[Nodo {self.node_id}] Enviado ELECTION a {n_id}")
+        higher_nodes = [n_id for n_id in self.all_ports if n_id > self.node_id]
+        
+        for n_id in higher_nodes:
+            if self.send_message(self.all_ports[n_id], 'election'):
+                print(f"[Nodo {self.node_id}] Enviado ELECTION a {n_id}")
         
         # Esperar respuestas
         time.sleep(2)
         
         # Si no hay nodos mayores o no respondieron
-        if not higher_nodes_exist or not self.ok_received:
+        if not higher_nodes or not self.ok_received:
             self.declare_victory()
         else:
             print(f"[Nodo {self.node_id}] Elección fallida, recibió OK")
@@ -148,18 +147,7 @@ class BullyNode:
             return False
             
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(1.0)
-            s.connect(('localhost', leader_port))
-            message = {
-                'type': 'ping',
-                'sender_id': self.node_id,
-                'sender_port': self.port
-            }
-            s.send(json.dumps(message).encode())
-            response = s.recv(1024).decode()
-            s.close()
-            return True
+            return self.send_message(leader_port, 'ping')
         except:
             return False
 
@@ -178,13 +166,16 @@ class BullyNode:
                     print(f"[Nodo {self.node_id}] ¡Líder {self.leader_id} no responde!")
                     self.start_election()
             
-            # Simular falla aleatoria (10% de probabilidad, excepto líder)
-            if random.random() < 0.1 and self.node_id != self.leader_id:
+            # Simular falla aleatoria (10% de probabilidad, AHORA INCLUYE AL LÍDER)
+            if random.random() < 0.1:  # Eliminada la restricción para el líder
                 self.active = False
                 print(f"\n[Nodo {self.node_id}] ¡HE FALLADO!")
                 time.sleep(random.randint(10, 15))
                 self.active = True
                 print(f"\n[Nodo {self.node_id}] ¡RECUPERADO!")
+                # Si era el líder, iniciar elección al recuperarse
+                if self.node_id == self.leader_id:
+                    self.start_election()
 
     def print_status(self):
         """Muestra estado periódicamente"""
@@ -217,6 +208,5 @@ def main():
     # Mantener programa ejecutando
     while True:
         time.sleep(1)
-
 
 main()
