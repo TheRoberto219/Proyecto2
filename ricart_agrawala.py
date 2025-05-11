@@ -156,5 +156,5 @@ ports = [5000, 5001, 5002]  # Puertos para 3 procesos
 import sys
 pid = int(sys.argv[1]) if len(sys.argv) > 1 else 0
     
-process = Process(pid, ports, ports)
+process = Process(pid,ports, ports)
 process.simulate()
