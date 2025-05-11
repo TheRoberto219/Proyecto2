@@ -1,4 +1,3 @@
-//ghp_nvQREGyuqwuT3tHNFDSKaS69PsxnVt0v2j b2
 import socket
 import time
 import random
