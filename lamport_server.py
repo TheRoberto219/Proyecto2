@@ -25,5 +25,5 @@ def iniciar_servidor(puerto):
         conn, addr = servidor.accept()
         threading.Thread(target=manejar_cliente, args=(conn, addr)).start()
 
-if __name__ == "__main__":
-    iniciar_servidor(9099)
+
+iniciar_servidor(9099)
