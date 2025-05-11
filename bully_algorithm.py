@@ -9,11 +9,10 @@ class BullyNode:
         self.node_id = node_id
         self.port = port
         self.all_ports = all_ports  # {id: port}
-        self.leader_id = max(all_ports.keys())  # Líder inicial es el de mayor ID
+        self.leader_id = max(all_ports.keys())
         self.active = True
         self.election_in_progress = False
         self.ok_received = False
-        self.known_leader = self.leader_id
         
         # Configurar socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -79,22 +78,21 @@ class BullyNode:
         print(f"\n[Nodo {self.node_id}] Iniciando elección")
         
         # Enviar a nodos con mayor ID
-        higher_nodes = [n_id for n_id in self.all_ports if n_id > self.node_id]
-        responses = 0
+        higher_nodes_exist = False
+        for n_id, port in self.all_ports.items():
+            if n_id > self.node_id:
+                higher_nodes_exist = True
+                if self.send_message(port, 'election'):
+                    print(f"[Nodo {self.node_id}] Enviado ELECTION a {n_id}")
         
-        for n_id in higher_nodes:
-            if self.send_message(self.all_ports[n_id], 'election'):
-                print(f"[Nodo {self.node_id}] Enviado ELECTION a {n_id}")
-                responses += 1
-        
-        # Esperar respuestas (2 segundos)
+        # Esperar respuestas
         time.sleep(2)
         
         # Si no hay nodos mayores o no respondieron
-        if not higher_nodes or not self.ok_received:
+        if not higher_nodes_exist or not self.ok_received:
             self.declare_victory()
         else:
-            print(f"[Nodo {self.node_id}] Elección fallida, recibió respuestas")
+            print(f"[Nodo {self.node_id}] Elección fallida, recibió OK")
             self.election_in_progress = False
 
     def handle_election(self, message):
@@ -119,7 +117,6 @@ class BullyNode:
     def declare_victory(self):
         """Se declara líder"""
         self.leader_id = self.node_id
-        self.known_leader = self.node_id
         self.election_in_progress = False
         print(f"\n=== [Nodo {self.node_id}] ¡Soy el nuevo LÍDER! ===")
         
@@ -133,7 +130,6 @@ class BullyNode:
         """Procesa anuncio de victoria"""
         print(f"[Nodo {self.node_id}] Reconociendo nuevo líder: {message['sender_id']}")
         self.leader_id = message['sender_id']
-        self.known_leader = message['sender_id']
         self.election_in_progress = False
 
     def handle_ping(self):
@@ -177,28 +173,25 @@ class BullyNode:
                 continue
                 
             # Verificar líder (excepto si soy el líder)
-            if self.node_id != self.known_leader:
+            if self.node_id != self.leader_id:
                 if not self.check_leader():
-                    print(f"[Nodo {self.node_id}] ¡Líder {self.known_leader} no responde!")
+                    print(f"[Nodo {self.node_id}] ¡Líder {self.leader_id} no responde!")
                     self.start_election()
             
-            # Simular falla aleatoria (10% de probabilidad)
-            if random.random() < 0.1:
+            # Simular falla aleatoria (10% de probabilidad, excepto líder)
+            if random.random() < 0.1 and self.node_id != self.leader_id:
                 self.active = False
                 print(f"\n[Nodo {self.node_id}] ¡HE FALLADO!")
                 time.sleep(random.randint(10, 15))
                 self.active = True
                 print(f"\n[Nodo {self.node_id}] ¡RECUPERADO!")
-                # Si era el líder, iniciar elección al recuperarse
-                if self.node_id == self.leader_id:
-                    self.start_election()
 
     def print_status(self):
         """Muestra estado periódicamente"""
         while True:
             time.sleep(8)
             if self.active:
-                status = "LÍDER" if self.node_id == self.known_leader else f"seguidor (Líder: {self.known_leader})"
+                status = "LÍDER" if self.node_id == self.leader_id else f"seguidor (Líder: {self.leader_id})"
                 print(f"[Nodo {self.node_id}] Estado: {status}")
 
 def main():
