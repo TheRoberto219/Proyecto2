@@ -170,7 +170,7 @@ class BullyNode:
             if random.random() < 0.1:  # Eliminada la restricción para el líder
                 self.active = False
                 print(f"\n[Nodo {self.node_id}] ¡HE FALLADO!")
-                time.sleep(random.randint(30, 45))
+                time.sleep(random.randint(8, 12))
                 self.active = True
                 print(f"\n[Nodo {self.node_id}] ¡RECUPERADO!")
                 # Si era el líder, iniciar elección al recuperarse
