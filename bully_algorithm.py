@@ -1,189 +1,106 @@
 import socket
 import threading
 import time
-import random
-import json
 
 class BullyNode:
-    def __init__(self, node_id, port, all_ports):
+    def __init__(self, node_id, port, nodes_config):
         self.node_id = node_id
         self.port = port
-        self.all_ports = all_ports  # {id: port}
-        self.leader_id = max(all_ports.keys())
-        self.active = True
-        self.election_in_progress = False
-        self.ok_received = False
-        
-        # Configurar socket
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(('localhost', port))
-        self.sock.listen(5)
-        
-        # Iniciar hilos
-        threading.Thread(target=self.listen_for_messages, daemon=True).start()
-        threading.Thread(target=self.node_behavior, daemon=True).start()
-        threading.Thread(target=self.print_status, daemon=True).start()
+        self.nodes_config = nodes_config
+        self.leader_id = None
+        self.state = "follower"
+        self.alive = True
 
-    def listen_for_messages(self):
-        """Escucha mensajes entrantes"""
-        while True:
-            try:
-                conn, addr = self.sock.accept()
-                data = conn.recv(1024).decode()
-                conn.close()
-                if data:
-                    message = json.loads(data)
+        self.server_thread = threading.Thread(target=self.start_server)
+        self.server_thread.daemon = True
+        self.server_thread.start()
+
+        time.sleep(2)
+        self.start_election()
+
+        # Simulación de fallos y recuperación
+        threading.Thread(target=self.failure_simulation).start()
+
+    def start_server(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.bind(('localhost', self.port))
+            while True:
+                try:
+                    data, addr = s.recvfrom(1024)
+                    message = data.decode()
                     self.handle_message(message)
-            except:
-                pass
+                except:
+                    continue
+
+    def send_message(self, target_id, message):
+        port = self.nodes_config[target_id]
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(message.encode(), ('localhost', port))
+
+    def broadcast_message(self, message, exclude_self=True):
+        for nid in self.nodes_config:
+            if exclude_self and nid == self.node_id:
+                continue
+            self.send_message(nid, message)
 
     def handle_message(self, message):
-        """Procesa mensajes recibidos"""
-        msg_type = message['type']
-        
-        if msg_type == 'election':
-            self.handle_election(message)
-        elif msg_type == 'answer':
-            self.handle_answer()
-        elif msg_type == 'victory':
-            self.handle_victory(message)
-        elif msg_type == 'ping':
-            self.handle_ping()
+        parts = message.split()
+        cmd = parts[0]
 
-    def send_message(self, dest_port, msg_type):
-        """Envía mensaje a otro nodo"""
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(1.0)
-            s.connect(('localhost', dest_port))
-            message = {
-                'type': msg_type,
-                'sender_id': self.node_id,
-                'sender_port': self.port
-            }
-            s.send(json.dumps(message).encode())
-            s.close()
-            return True
-        except:
-            return False
+        if cmd == "ELECTION":
+            sender = int(parts[1])
+            if self.alive:
+                print(f"[Nodo {self.node_id}] Recibido ELECTION de {sender}")
+                if self.node_id > sender:
+                    self.send_message(sender, f"ANSWER {self.node_id}")
+                    print(f"[Nodo {self.node_id}] Enviado ANSWER a {sender}")
+                    self.start_election()
+
+        elif cmd == "ANSWER":
+            sender = int(parts[1])
+            print(f"[Nodo {self.node_id}] Recibido ANSWER de {sender}")
+            self.got_answer = True
+
+        elif cmd == "VICTORY":
+            new_leader = int(parts[1])
+            print(f"[Nodo {self.node_id}] Recibido VICTORY de {new_leader}, mi líder actual es {self.leader_id}")
+            if self.leader_id is None or new_leader > self.leader_id:
+                self.leader_id = new_leader
+                self.state = "follower"
+                print(f"[Nodo {self.node_id}] Estado: {self.state} (Líder: {self.leader_id})")
 
     def start_election(self):
-        """Inicia proceso de elección"""
-        if not self.active or self.election_in_progress:
+        if not self.alive:
             return
-            
-        self.election_in_progress = True
-        self.ok_received = False
-        print(f"\n[Nodo {self.node_id}] Iniciando elección")
-        
-        # Enviar a nodos con mayor ID
-        higher_nodes = [n_id for n_id in self.all_ports if n_id > self.node_id]
-        
-        for n_id in higher_nodes:
-            if self.send_message(self.all_ports[n_id], 'election'):
-                print(f"[Nodo {self.node_id}] Enviado ELECTION a {n_id}")
-        
-        # Esperar respuestas
-        time.sleep(2)
-        
-        # Si no hay nodos mayores o no respondieron
-        if not higher_nodes or not self.ok_received:
-            self.declare_victory()
-        else:
-            print(f"[Nodo {self.node_id}] Elección fallida, recibió OK")
-            self.election_in_progress = False
 
-    def handle_election(self, message):
-        """Procesa mensaje de elección"""
-        if not self.active:
-            return
-            
-        print(f"[Nodo {self.node_id}] Recibido ELECTION de {message['sender_id']}")
-        
-        # Responder OK
-        if self.send_message(message['sender_port'], 'answer'):
-            print(f"[Nodo {self.node_id}] Enviado ANSWER a {message['sender_id']}")
-        
-        # Iniciar propia elección si tiene mayor ID
-        if self.node_id > message['sender_id']:
+        print(f"[Nodo {self.node_id}] Iniciando elección")
+        self.got_answer = False
+        for nid in self.nodes_config:
+            if nid > self.node_id:
+                self.send_message(nid, f"ELECTION {self.node_id}")
+
+        time.sleep(2)
+
+        if not self.got_answer:
+            # Soy el nuevo líder
+            self.state = "leader"
+            self.leader_id = self.node_id
+            print(f"=== [Nodo {self.node_id}] ¡Soy el nuevo LÍDER! ===")
+            self.broadcast_message(f"VICTORY {self.node_id}")
+
+        else:
+            print(f"[Nodo {self.node_id}] Esperando nuevo líder...")
+
+    def failure_simulation(self):
+        while True:
+            time.sleep(10)
+            self.alive = False
+            print(f"[Nodo {self.node_id}] ¡HE FALLADO!")
+            time.sleep(5)
+            self.alive = True
+            print(f"[Nodo {self.node_id}] ¡RECUPERADO!")
             self.start_election()
 
-    def handle_answer(self):
-        """Procesa respuesta OK"""
-        self.ok_received = True
-
-    def declare_victory(self):
-        """Se declara líder"""
-        self.leader_id = self.node_id
-        self.election_in_progress = False
-        print(f"\n=== [Nodo {self.node_id}] ¡Soy el nuevo LÍDER! ===")
-        
-        # Notificar a todos
-        for n_id, port in self.all_ports.items():
-            if n_id != self.node_id:
-                if self.send_message(port, 'victory'):
-                    print(f"[Nodo {self.node_id}] Notificado VICTORY a {n_id}")
-
-    def handle_victory(self, message):
-        """Procesa anuncio de victoria"""
-        print(f"[Nodo {self.node_id}] Reconociendo nuevo líder: {message['sender_id']}")
-        self.leader_id = message['sender_id']
-        self.election_in_progress = False
-
-    def handle_ping(self):
-        """Responde a ping"""
-        if self.active:
-            return True
-        return False
-
-    def check_leader(self):
-        """Verifica si el líder está activo"""
-        if self.leader_id == self.node_id:
-            return True
-            
-        leader_port = self.all_ports.get(self.leader_id)
-        if not leader_port:
-            return False
-            
-        try:
-            return self.send_message(leader_port, 'ping')
-        except:
-            return False
-
-    def node_behavior(self):
-        """Comportamiento automático del nodo"""
-        while True:
-            # Intervalo aleatorio entre 5-10 segundos
-            time.sleep(random.randint(5, 10))
-            
-            if not self.active:
-                continue
-                
-            # Verificar líder (excepto si soy el líder)
-            if self.node_id != self.leader_id:
-                if not self.check_leader():
-                    print(f"[Nodo {self.node_id}] ¡Líder {self.leader_id} no responde!")
-                    self.start_election()
-            
-            # Simular falla aleatoria (10% de probabilidad, AHORA INCLUYE AL LÍDER)
-            if random.random() < 0.1:  # Eliminada la restricción para el líder
-                self.active = False
-                print(f"\n[Nodo {self.node_id}] ¡HE FALLADO!")
-                time.sleep(random.randint(10, 15))
-                self.active = True
-                print(f"\n[Nodo {self.node_id}] ¡RECUPERADO!")
-                # Si era el líder, iniciar elección al recuperarse
-                if self.node_id == self.leader_id:
-                    self.start_election()
-
-    def print_status(self):
-        """Muestra estado periódicamente"""
-        while True:
-            time.sleep(8)
-            if self.active:
-                status = "LÍDER" if self.node_id == self.leader_id else f"seguidor (Líder: {self.leader_id})"
-                print(f"[Nodo {self.node_id}] Estado: {status}")
 
 def main():
     # Configuración de nodos
@@ -194,19 +111,20 @@ def main():
         4: 5004,
         5: 5005
     }
-    
+
     node_id = int(input("Ingrese ID del nodo (1-5): "))
     if node_id not in nodes_config:
         print("ID inválido")
         return
-    
+
     print(f"\nIniciando nodo {node_id} en puerto {nodes_config[node_id]}")
     print("----------------------------------------")
-    
+
     node = BullyNode(node_id, nodes_config[node_id], nodes_config)
-    
+
     # Mantener programa ejecutando
     while True:
         time.sleep(1)
+
 
 main()
